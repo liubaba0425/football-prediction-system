@@ -410,78 +410,65 @@ class FeatureEngineer:
         
     def prepare_inference_features(self, match_info: Dict, team_form_data: Dict) -> pd.DataFrame:
         """
-        为实时预测准备特征
+        为实时预测准备特征 (v3 — 真实赔率特征)
         
-        Args:
-            match_info: 比赛信息（来自现有系统）
-            team_form_data: 球队近期状态数据
-            
-        Returns:
-            包含单场比赛特征的DataFrame
+        生成与训练集完全一致的18个赔率特征
         """
-        # 从现有系统提取特征
+        # 提取赔率数据
+        home_odds = match_info.get("home_odds", 2.0)
+        draw_odds = match_info.get("draw_odds", 3.0)
+        away_odds = match_info.get("away_odds", 2.0)
+        
+        # 基础赔率特征 (7个)
+        home_implied = 1.0 / max(home_odds, 1.01)
+        draw_implied = 1.0 / max(draw_odds, 1.01)
+        away_implied = 1.0 / max(away_odds, 1.01)
+        total_implied = home_implied + draw_implied + away_implied
+        
         features = {
-            # 基础信息
-            "is_weekend": 1 if match_info.get("match_day_type") == "周末" else 0,
-            
-            # 赔率相关特征
-            "home_odds": match_info.get("home_odds", 2.0),
-            "draw_odds": match_info.get("draw_odds", 3.0),
-            "away_odds": match_info.get("away_odds", 2.0),
-            
-            # 隐含概率
-            "home_implied_prob": 1 / match_info.get("home_odds", 2.0),
-            "away_implied_prob": 1 / match_info.get("away_odds", 2.0),
-            "draw_implied_prob": 1 / match_info.get("draw_odds", 3.0),
-            
-            # 赔率差距
-            "odds_gap": abs(match_info.get("home_odds", 2.0) - match_info.get("away_odds", 2.0)),
-            
-            # 球队状态（从现有智能体获取）
-            "home_form": team_form_data.get("home", {}).get("form_score", 0.5),
-            "away_form": team_form_data.get("away", {}).get("form_score", 0.5),
-            "form_diff": team_form_data.get("home", {}).get("form_score", 0.5) - 
-                         team_form_data.get("away", {}).get("form_score", 0.5),
-            
-            # 近期表现
-            "home_goals_scored_avg": team_form_data.get("home", {}).get("goals_scored_avg", 1.0),
-            "home_goals_conceded_avg": team_form_data.get("home", {}).get("goals_conceded_avg", 1.0),
-            "away_goals_scored_avg": team_form_data.get("away", {}).get("goals_scored_avg", 1.0),
-            "away_goals_conceded_avg": team_form_data.get("away", {}).get("goals_conceded_avg", 1.0),
-            
-            # 主客场表现
-            "home_home_performance": team_form_data.get("home", {}).get("home_performance", 0.5),
-            "away_away_performance": team_form_data.get("away", {}).get("away_performance", 0.5),
-            
-            # 赛程压力
-            "home_schedule_pressure": match_info.get("schedule_pressure", {}).get("home", {}).get("fatigue_risk", "中"),
-            "away_schedule_pressure": match_info.get("schedule_pressure", {}).get("away", {}).get("fatigue_risk", "中"),
+            "home_odds": home_odds,
+            "draw_odds": draw_odds,
+            "away_odds": away_odds,
+            "home_implied_prob": home_implied / total_implied,
+            "draw_implied_prob": draw_implied / total_implied,
+            "away_implied_prob": away_implied / total_implied,
+            "odds_gap": abs(home_odds - away_odds),
+            "implied_prob_diff": (home_implied - away_implied) / total_implied,
         }
         
-        # 转换分类特征
-        pressure_mapping = {"高": 2, "中": 1, "低": 0}
-        features["home_pressure_score"] = pressure_mapping.get(features["home_schedule_pressure"], 1)
-        features["away_pressure_score"] = pressure_mapping.get(features["away_schedule_pressure"], 1)
-        features["pressure_diff"] = features["home_pressure_score"] - features["away_pressure_score"]
+        # 亚盘特征 (从Pinnacle spreads提取)
+        spreads = match_info.get("spreads", {}) or {}
+        asian_handicap = 0.0
+        for outcome in spreads.get("outcomes", []):
+            if outcome.get("name") == match_info.get("home_team"):
+                asian_handicap = outcome.get("point", 0.0)
+                break
+        features["asian_handicap"] = asian_handicap
+        features["handicap_magnitude"] = abs(asian_handicap)
         
-        # 删除原始字符串列以避免XGBoost错误
-        del features["home_schedule_pressure"]
-        del features["away_schedule_pressure"]
+        # 大小球特征 (从Pinnacle totals提取)
+        totals = match_info.get("totals", {}) or {}
+        over_odds_val = 1.9
+        under_odds_val = 2.0
+        for outcome in totals.get("outcomes", []):
+            if outcome.get("name") == "Over":
+                over_odds_val = outcome.get("price", 1.9)
+            elif outcome.get("name") == "Under":
+                under_odds_val = outcome.get("price", 2.0)
+        features["over_odds"] = over_odds_val
+        features["under_odds"] = under_odds_val
+        over_implied = 1.0 / max(over_odds_val, 1.01)
+        under_implied = 1.0 / max(under_odds_val, 1.01)
+        features["over_under_bias"] = over_implied - under_implied
         
-        # 创建DataFrame
+        # 派生特征 (6个)
+        features["odds_ratio_home"] = away_odds / max(home_odds, 1.01)
+        features["odds_ratio_away"] = home_odds / max(away_odds, 1.01)
+        features["home_favorite"] = 1 if home_odds < away_odds else 0
+        features["clear_favorite"] = 1 if (home_odds < 1.7 or away_odds < 1.7) else 0
+        features["days_since_epoch"] = 0  # 推理时无历史日期，填充0
+        
+        # 创建DataFrame — 只保留训练特征
         df = pd.DataFrame([features])
-        
-        # 添加联赛特征（假设是英超）
-        df["league_PL"] = 1
-        df["league_PD"] = 0
-        df["league_SA"] = 0
-        df["league_BL1"] = 0
-        df["league_FL1"] = 0
-        
-        # 添加赛季阶段特征（根据当前月份）
-        current_month = datetime.now().month
-        df["is_season_start"] = 1 if current_month in [8, 9, 10] else 0
-        df["is_season_mid"] = 1 if current_month in [11, 12, 1, 2] else 0
-        df["is_season_end"] = 1 if current_month in [3, 4, 5] else 0
-        
+        df = df.fillna(0)
         return df
