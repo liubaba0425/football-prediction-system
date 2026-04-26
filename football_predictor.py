@@ -243,6 +243,13 @@ class FootballPredictor:
         # 初始化回测管理器（单例）
         self.backtest_manager = BacktestManager()
 
+        # 初始化赔率追踪器（单例）
+        try:
+            from odds_tracker import get_odds_tracker
+            self.odds_tracker = get_odds_tracker()
+        except ImportError:
+            self.odds_tracker = None
+
     def predict(self, home_team: str, away_team: str, league: str = "soccer_epl"):
         """
         执行完整预测流程
@@ -271,10 +278,34 @@ class FootballPredictor:
         data_source = pinnacle_data.get("source", "未知")
         print(f"📊 数据来源: {data_source}")
 
-        # 检查是否有有效的赔率数据
+        # 提取赔率数据字段
         h2h_data = pinnacle_data.get("h2h")
         spreads_data = pinnacle_data.get("spreads")
         totals_data = pinnacle_data.get("totals")
+
+        # 记录赔率快照（用于追踪赔率变化）
+        match_key = f"{home_team}_{away_team}_{datetime.now().strftime('%Y-%m-%d')}"
+        if self.odds_tracker:
+            try:
+                odds_snapshot = {
+                    "home_odds": h2h_data.get("home") if h2h_data else None,
+                    "draw_odds": h2h_data.get("draw") if h2h_data else None,
+                    "away_odds": h2h_data.get("away") if h2h_data else None,
+                }
+                # 提取盘口
+                if spreads_data and spreads_data.get("outcomes"):
+                    for o in spreads_data["outcomes"]:
+                        if o.get("name") == home_team:
+                            odds_snapshot["handicap"] = o.get("point", 0)
+                            break
+                self.odds_tracker.record_snapshot(match_key, odds_snapshot)
+                # 检查赔率异动
+                movement = self.odds_tracker.get_odds_movement(match_key)
+                if movement:
+                    match_info["odds_movement"] = movement
+                    print(f"   📈 赔率异动: {movement['interpretation']}")
+            except Exception as e:
+                pass  # 非关键，静默失败
 
         if not h2h_data or len(h2h_data) < 3:
             print("❌ 赔率数据不足，无法分析")
@@ -633,16 +664,42 @@ class FootballPredictor:
             risk_factors.append("双方状态差距较大，弱队可能超常发挥")
             risk_weights.append(10)
 
+        # === 风险因素6：盘口深度风险 (20%) ===
+        # 深让盘本身就有不确定性（强队赢球不赢盘）
+        spreads = pinnacle_data.get("spreads", {})
+        if spreads and spreads.get("outcomes"):
+            for o in spreads["outcomes"]:
+                if o.get("name") in (match_info.get("home_team"), match_info["home_team"]):
+                    handicap = o.get("point", 0)
+                    if abs(handicap) > 1.5:
+                        risk_factors.append(f"深盘让球 {handicap:+.2f}，穿盘风险高")
+                        risk_weights.append(20)
+                    elif abs(handicap) > 1.0:
+                        risk_factors.append(f"中深盘让球 {handicap:+.2f}，存在冷门可能")
+                        risk_weights.append(10)
+                    break
+
+        # === 风险因素7：联赛风险校准 (15%) ===
+        league = match_info.get("league", "")
+        LEAGUE_RISK = {
+            "西班牙甲级联赛": 15,   # 回测0%准确率
+            "欧洲协会联赛（欧会杯）": 10,  # 回测25%
+        }
+        league_extra = LEAGUE_RISK.get(league, 0)
+        if league_extra > 0:
+            risk_factors.append(f"{league}联赛预测风险偏高（回测数据）")
+            risk_weights.append(league_extra)
+
         # 计算综合风险分数
         if risk_weights:
-            risk_score = min(100, sum(risk_weights) + 20)  # 基础分20
+            risk_score = min(100, sum(risk_weights) + 25)  # 基础分提至25
         else:
-            risk_score = 25
+            risk_score = 35  # 默认分从25升至35（更谨慎）
 
-        # 确定风险等级
-        if risk_score >= 60:
+        # 确定风险等级（阈值下移）
+        if risk_score >= 55:
             risk_level = "高"
-        elif risk_score >= 40:
+        elif risk_score >= 35:
             risk_level = "中"
         else:
             risk_level = "低"
@@ -770,10 +827,25 @@ class FootballPredictor:
             # 阻上盘：机构在阻止投注上盘，上盘可能有机会
             recommendation = f"{upper_team} {upper_handicap:+.2f}" if upper_team else "谨慎或放弃"
         elif opening_type == "高开":
-            value_score = 65
-            intention = "诱上盘"
-            # 诱上盘：机构在诱导投注上盘，下盘可能有机会
-            recommendation = f"{lower_team} {lower_handicap:+.2f}" if lower_team else "谨慎或放弃"
+            # 诱上盘：机构诱导投注上盘 → 应该看好下盘
+            # ⚠️ 回测修正：强队深让时「诱上盘」陷阱多 → 降低价值分
+            handicap_magnitude = abs(actual_handicap)
+            if handicap_magnitude > 1.25:
+                # 深让盘 (>1.25球) 的「诱上盘」信号不可靠
+                # 强队赢球不赢盘的情况多，但弱队也难守住深盘
+                value_score = 50  # 降至中性，不追下盘
+                intention = "诱上盘(深让-谨慎)"
+                recommendation = "谨慎或放弃"
+            elif handicap_magnitude > 0.75:
+                # 中让盘 (0.75~1.25球) → 降低信心
+                value_score = 55
+                intention = "诱上盘(中让)"
+                recommendation = f"{lower_team} {lower_handicap:+.2f}" if lower_team else "谨慎或放弃"
+            else:
+                # 浅让盘 (<0.75球) → 原逻辑保留
+                value_score = 65
+                intention = "诱上盘"
+                recommendation = f"{lower_team} {lower_handicap:+.2f}" if lower_team else "谨慎或放弃"
         elif opening_type == "变盘":
             value_score = 60
             intention = "盘口方向改变"
