@@ -28,13 +28,19 @@ def load_data(bm: BacktestManager) -> List[Dict]:
 
 
 def analyze_overall(resolved: List[Dict]) -> Dict:
-    """总体分析"""
+    """总体分析 — 排除需人工判定的记录"""
     total = len(resolved)
-    correct = sum(1 for r in resolved if r.get("correct", "").lower() == "true")
-    wrong = total - correct
-    accuracy = correct / total * 100 if total > 0 else 0
+    # 只统计有明确判定的
+    verdicts = [r for r in resolved if r.get("correct", "").lower() in ("true", "false")]
+    manual = [r for r in resolved if r.get("correct", "") not in ("true", "false", "True", "False")]
+    
+    correct = sum(1 for r in verdicts if r.get("correct", "").lower() == "true")
+    wrong = len(verdicts) - correct
+    accuracy = correct / len(verdicts) * 100 if verdicts else 0
     return {
         "total": total,
+        "auto_verdicts": len(verdicts),
+        "manual_review": len(manual),
         "correct": correct,
         "wrong": wrong,
         "accuracy": round(accuracy, 1),
@@ -274,8 +280,9 @@ def print_report(analysis: Dict):
     print(f"{'─'*60}")
     acc = overall.get("accuracy", 0)
     bar = "█" * int(acc / 2) + "░" * (50 - int(acc / 2))
-    print(f"   准确率: {acc}% [{bar}]")
-    print(f"   正确/错误/总计: {overall.get('correct', 0)}/{overall.get('wrong', 0)}/{overall.get('total', 0)}")
+    print(f"   自动判定准确率: {acc}% [{bar}]")
+    print(f"   正确/错误/自动判定: {overall.get('correct', 0)}/{overall.get('wrong', 0)}/{overall.get('auto_verdicts', 0)}")
+    print(f"   需人工判定: {overall.get('manual_review', 0)} | 总计: {overall.get('total', 0)}")
 
     # 趋势
     trend = analysis.get("recent_trend", {})

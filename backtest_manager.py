@@ -175,7 +175,10 @@ class BacktestManager:
 
         if updated:
             self._write_all(rows)
-            status = "✅ 正确" if correct else "❌ 错误"
+            if isinstance(correct, bool):
+                status = "✅ 正确" if correct else "❌ 错误"
+            else:
+                status = "🤔 待确认"
             print(f"📊 结果已回填: {prediction_id} → {actual_result} ({status})")
         else:
             print(f"⚠️ 未找到预测: {prediction_id}")
