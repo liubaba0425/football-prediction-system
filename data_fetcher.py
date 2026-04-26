@@ -6,6 +6,7 @@
 import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+from retry_utils import safe_request
 
 
 class RealTimeDataFetcher:
@@ -26,7 +27,7 @@ class RealTimeDataFetcher:
             query = f"{team_name} football injury suspension news today"
             url = f"https://api.duckduckgo.com/?q={query}&format=json"
 
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = safe_request(requests.get, url, headers=self.headers, timeout=10)
 
             if response.status_code == 200:
                 data = response.json()

@@ -150,25 +150,64 @@ def chinese_to_english(team_cn: str, cn_to_en: Dict[str, str]) -> str:
     return team_cn  # fallback
 
 
+def _normalize_team_name(name: str) -> str:
+    """标准化队名: 去前缀、处理特殊字符、统一变体"""
+    n = name.lower()
+    # Umlauts + special chars
+    n = n.replace("ä", "a").replace("ö", "o").replace("ü", "u").replace("ß", "ss")
+    n = n.replace("é", "e").replace("è", "e").replace("ê", "e")
+    n = n.replace("í", "i").replace("ì", "i")
+    n = n.replace("ó", "o").replace("ò", "o").replace("õ", "o")
+    n = n.replace("ú", "u").replace("ù", "u")
+    n = n.replace("á", "a").replace("à", "a").replace("ã", "a")
+    n = n.replace("ç", "c")
+    # Strip common prefixes/suffixes
+    for prefix in ["fc ", "afc ", "ac ", "as ", "cd ", "sc ", "ssc ", "rcd ",
+                    "vfl ", "vfb ", "rb ", "tsg ", "sv ", "1. ", "bayer 04 ",
+                    "borussia ", "eintracht ", "hertha ", "hannover 96 ",
+                    "1. fc ", "sp "]:
+        if n.startswith(prefix):
+            n = n[len(prefix):]
+    # Strip " fc" suffix
+    n = n.replace(" fc", "").replace(" afc", "")
+    # Normalize known alternates
+    n = n.replace("munchen", "munich").replace("monchengladbach", "gladbach")
+    n = n.replace("koln", "cologne").replace("nurnberg", "nuremberg")
+    return n.strip()
+
 def api_team_name_matches(api_name: str, expected_en_name: str) -> bool:
     """
     判断 API 返回的队名是否匹配预期的英文队名。
     API 返回格式: "Newcastle United FC", "FC Bayern München"
     我们预期: "Newcastle United", "Bayern Munich"
     """
-    api_lower = api_name.lower().replace(" fc", "").replace(" afc", "")
-    expected_lower = expected_en_name.lower()
+    api_norm = _normalize_team_name(api_name)
+    exp_norm = _normalize_team_name(expected_en_name)
 
     # 直接包含
-    if expected_lower in api_lower or api_lower in expected_lower:
+    if exp_norm in api_norm or api_norm in exp_norm:
         return True
 
-    # 单词级匹配: 至少 60% 的单词重合
-    api_words = set(api_lower.replace(".", " ").split())
-    exp_words = set(expected_lower.replace(".", " ").split())
-    if api_words and exp_words:
-        overlap = len(api_words & exp_words)
-        if overlap >= max(1, len(exp_words) * 0.6):
+    # 单词级匹配: 只要有一个非停用词重合且总重合>=50%即可
+    stopwords = {"fc", "afc", "ac", "sc", "cf", "cd", "as", "de", "la", "el", "real",
+                 "club", "united", "city", "town", "sporting", "athletic"}
+    api_words = set(api_norm.split()) - stopwords
+    exp_words = set(exp_norm.split()) - stopwords
+
+    if not api_words or not exp_words:
+        return False
+
+    overlap = len(api_words & exp_words)
+    # At least 1 word overlap AND >= 50% of expected words match
+    if overlap >= 1 and overlap >= len(exp_words) * 0.5:
+        return True
+
+    # Special: check if key identifying words match (longest words)
+    exp_key = [w for w in exp_words if len(w) >= 4]
+    api_key = [w for w in api_words if len(w) >= 4]
+    if exp_key and api_key:
+        key_overlap = len(set(exp_key) & set(api_key))
+        if key_overlap >= 1:
             return True
 
     return False

@@ -17,6 +17,8 @@ from backtest_manager import BacktestManager
 # 添加当前目录到Python路径，确保可以导入ml_analyst模块
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from retry_utils import safe_request
+
 # ML-Analyst 导入
 try:
     from ml_analyst.ml_analyst import MLAnalyst
@@ -84,11 +86,10 @@ class OddsAPIClient:
         }
 
         try:
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
+            response = safe_request(requests.get, url, params=params, timeout=30)
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"API 请求错误: {e}")
+            print(f"API 请求错误（已重试后仍失败）: {e}")
             return []
 
     def find_match(self, data: List[Dict], home_team: str, away_team: str) -> Optional[Dict]:
@@ -859,6 +860,26 @@ class FootballPredictor:
         print(f"   ✅ 大小球: {total_line}球 | 偏向: {bias} | 价值: {value_score:.0f}/100")
         return report
 
+    # 联赛校准表（基于回测数据 106场）
+    # penalty_mult < 1.0 → 降低信心（该联赛系统表现差）
+    # bonus_mult  > 1.0 → 提升信心（该联赛系统表现好）
+    LEAGUE_CALIBRATION = {
+        "西班牙甲级联赛":      {"mult": 0.70, "reason": "回测0%准确率"},
+        "欧洲协会联赛（欧会杯）": {"mult": 0.80, "reason": "回测25%准确率"},
+        "英格兰超级联赛":      {"mult": 1.08, "reason": "回测75%准确率"},
+        "法国甲级联赛":        {"mult": 1.05, "reason": "回测67%准确率"},
+        "韩国K联赛":           {"mult": 1.05, "reason": "回测67%准确率"},
+        "欧洲联赛（欧联杯）":   {"mult": 1.05, "reason": "回测67%准确率"},
+        "日本J联赛":           {"mult": 1.05, "reason": "回测67%准确率"},
+    }
+    # 大小球 vs 让球盘权重调整：大小球58%准确率 > 让球盘41%
+    OVERUNDER_MARKET_BOOST = 8   # 大小球在比较时获得+8分加成
+    # 低信心抑制阈值：<38%信心强推只有27%准确率
+    LOW_CONFIDENCE_THRESHOLD = 38
+    # 高信心加强：60%+信心带准确率82%
+    HIGH_CONFIDENCE_BOOST = 5    # 额外+5分
+    HIGH_CONFIDENCE_THRESHOLD = 60
+
     def _run_consensus_summarizer(self, match_info: Dict) -> Dict:
         """运行共识汇总师 - 生成单一推荐和信心分数"""
         # 提取各分析师的分数
@@ -926,8 +947,10 @@ class FootballPredictor:
             ml_score * weights["ml"]
         )
 
-        # 二选一：比较让球盘和大小球价值，选更高的
-        if asian_value > overunder_value:
+        # 二选一：比较让球盘和大小球价值
+        # 回测优化：大小球准确率(58%) > 让球盘(41%)，给大小球+8分加成
+        effective_overunder_value = overunder_value + self.OVERUNDER_MARKET_BOOST
+        if asian_value > effective_overunder_value:
             selected_market = "让球盘"
             selected_value = asian_value
             recommendation = self.reports.get("asian", {}).get("recommendation", "无法推荐")
@@ -936,7 +959,7 @@ class FootballPredictor:
                 "handicap": self.reports.get("asian", {}).get("actual_handicap", "N/A"),
                 "intention": self.reports.get("asian", {}).get("intention", "N/A")
             }
-        elif overunder_value > asian_value:
+        elif effective_overunder_value > asian_value:
             selected_market = "大小球"
             selected_value = overunder_value
             bias = self.reports.get("overunder", {}).get("market_bias", "均衡")
@@ -950,14 +973,18 @@ class FootballPredictor:
                 "under_odds": self.reports.get("overunder", {}).get("under_odds", "N/A")
             }
         else:
-            # 如果两个市场价值相同，选择让球盘（通常更有参考价值）
-            selected_market = "让球盘"
-            selected_value = asian_value
-            recommendation = self.reports.get("asian", {}).get("recommendation", "无法推荐")
+            # 如果两个市场价值相同（含加成后），优先选大小球（准确率更高）
+            selected_market = "大小球"
+            selected_value = overunder_value
+            bias = self.reports.get("overunder", {}).get("market_bias", "均衡")
+            line = self.reports.get("overunder", {}).get("mainstream_total_line", 2.5)
+            recommendation = f"{bias} {line}球"
             market_detail = {
-                "type": "asian",
-                "handicap": self.reports.get("asian", {}).get("actual_handicap", "N/A"),
-                "intention": self.reports.get("asian", {}).get("intention", "N/A")
+                "type": "overunder",
+                "line": line,
+                "bias": bias,
+                "over_odds": self.reports.get("overunder", {}).get("over_odds", "N/A"),
+                "under_odds": self.reports.get("overunder", {}).get("under_odds", "N/A")
             }
 
         # 最终信心分数 = 基础分数 × 市场价值系数
@@ -980,6 +1007,30 @@ class FootballPredictor:
             # 如果辩论裁决是观望，大幅降低信心
             if "观望" in debate_result.get("verdict", ""):
                 final_confidence = min(final_confidence, 45)
+
+        # 联赛校准 — 基于回测数据的联赛级信心调整
+        league = match_info.get("league", "")
+        calib = self.LEAGUE_CALIBRATION.get(league, {"mult": 1.0, "reason": "无回测数据"})
+        original_confidence = final_confidence
+        final_confidence *= calib["mult"]
+        if calib["mult"] != 1.0:
+            print(f"   📊 联赛校准: {league} ×{calib['mult']} ({calib['reason']}) "
+                  f"{original_confidence:.1f}% → {final_confidence:.1f}%")
+
+        # 低信心抑制 — 回测显示<38%信心带准确率仅27%，强推不如观望
+        if final_confidence < self.LOW_CONFIDENCE_THRESHOLD:
+            original_rec = recommendation
+            recommendation = "谨慎或放弃"
+            selected_market = "让球盘"
+            if "market_detail" in locals():
+                market_detail["intention"] = "低信心抑制"
+            print(f"   ⚠️ 低信心抑制: {final_confidence:.1f}% < {self.LOW_CONFIDENCE_THRESHOLD}%阈值 "
+                  f"(原推荐: {original_rec})")
+
+        # 高信心加强 — 回测显示60%+信心带准确率82%
+        if final_confidence >= self.HIGH_CONFIDENCE_THRESHOLD and upset_risk < 40:
+            final_confidence += self.HIGH_CONFIDENCE_BOOST
+            print(f"   🚀 高信心加强: +{self.HIGH_CONFIDENCE_BOOST}% → {final_confidence:.1f}% (冷门风险低)")
 
         # 确保信心分数在合理范围内
         final_confidence = max(5, min(90, final_confidence))

@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from config import ODDS_API_KEY, ODDS_API_BASE, SUPPORTED_LEAGUES
 from models import Match, Team, BookmakerOdds
+from retry_utils import safe_request
 
 
 class OddsAPIClient:
@@ -23,16 +24,15 @@ class OddsAPIClient:
         params["apiKey"] = self.api_key
 
         try:
-            response = requests.get(
+            response = safe_request(requests.get,
                 f"{self.base_url}{endpoint}",
                 headers=self.headers,
                 params=params,
                 timeout=30
             )
-            response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"API请求错误: {e}")
+            print(f"API请求错误（已重试后仍失败）: {e}")
             return None
 
     def get_sports(self) -> List[Dict]:

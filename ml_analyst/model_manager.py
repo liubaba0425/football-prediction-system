@@ -64,7 +64,8 @@ class ModelManager:
             return joblib_models[0]["path"]
             
         # 否则返回.json文件
-        json_models = [m for m in models if m["filename"].endswith(".json")]
+        json_models = [m for m in models if m["filename"].endswith(".json") 
+                       and "report" not in m["filename"].lower()]
         if json_models:
             return json_models[0]["path"]
             

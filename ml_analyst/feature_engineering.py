@@ -39,10 +39,13 @@ class FeatureEngineer:
         # 4. 提取H2H特征
         df_processed = self._extract_h2h_features(df_processed)
         
-        # 5. 创建标签
+        # 5. 提取赔率相关特征（合成赔率，基于球队实力）
+        df_processed = self._extract_odds_features(df_processed)
+        
+        # 6. 创建标签
         df_processed = self._create_labels(df_processed)
         
-        # 6. 清理缺失值
+        # 7. 清理缺失值
         df_processed = self._clean_missing_values(df_processed)
         
         self.logger.info(f"Feature engineering complete. Shape: {df_processed.shape}")
@@ -281,6 +284,80 @@ class FeatureEngineer:
         # 实现H2H特征提取
         # 由于时间关系，此处简化为基本特征
         df["h2h_exists"] = 1  # 简化，实际需要计算两队历史交锋次数
+        return df
+
+    def _extract_odds_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        提取赔率相关特征（合成赔率 — 基于球队历史实力推算）
+        
+        训练数据没有真实赔率，用球队表现推算「合成赔率」作为代理特征。
+        推理时这些特征会被 The Odds API 的真实赔率替换。
+        
+        核心思路：
+        1. 基于球队近期状态推算「实力分」
+        2. 实力分差 → 隐含胜率 → 合成赔率
+        3. 赔率差 (odds_gap) 反映市场对实力差距的判断
+        """
+        df = df.copy()
+        
+        # 确保有必要的列
+        needed = ["home_recent_form", "home_avg_goals_scored", "home_avg_goals_conceded",
+                   "away_recent_form", "away_avg_goals_scored", "away_avg_goals_conceded"]
+        for col in needed:
+            if col not in df.columns:
+                df[col] = 0.5  # 默认值
+        
+        # 计算球队实力分 (0-100 scale)
+        # 基于: 近期状态(40%) + 进球能力(30%) + 防守能力(30%)
+        df["home_strength"] = (
+            df["home_recent_form"].fillna(0.5) * 40 +
+            (df["home_avg_goals_scored"].fillna(1.0) / 3.0) * 30 +
+            (1.0 - df["home_avg_goals_conceded"].fillna(1.0) / 3.0) * 30
+        ).clip(10, 90)
+        
+        df["away_strength"] = (
+            df["away_recent_form"].fillna(0.5) * 40 +
+            (df["away_avg_goals_scored"].fillna(1.0) / 3.0) * 30 +
+            (1.0 - df["away_avg_goals_conceded"].fillna(1.0) / 3.0) * 30
+        ).clip(10, 90)
+        
+        # 实力差 → 隐含胜率（使用逻辑函数转换）
+        strength_diff = df["home_strength"] - df["away_strength"]
+        # Elo-style: 400 points ≈ 90% win probability
+        df["home_win_prob_synthetic"] = 1.0 / (1.0 + 10 ** (-strength_diff / 400.0))
+        
+        # 平局概率（实力接近时高，差距大时低）
+        df["draw_prob_synthetic"] = 0.30 * np.exp(-abs(strength_diff) / 200.0)
+        
+        # 客胜概率 = 剩余部分
+        df["away_win_prob_synthetic"] = 1.0 - df["home_win_prob_synthetic"] - df["draw_prob_synthetic"]
+        df["away_win_prob_synthetic"] = df["away_win_prob_synthetic"].clip(0.05, 0.95)
+        
+        # 合成赔率（隐含概率 → 赔率，含10% margin）
+        margin = 0.10
+        df["home_odds_synthetic"] = (1.0 / df["home_win_prob_synthetic"].clip(0.05)) * (1.0 - margin)
+        df["draw_odds_synthetic"] = (1.0 / df["draw_prob_synthetic"].clip(0.05)) * (1.0 - margin)
+        df["away_odds_synthetic"] = (1.0 / df["away_win_prob_synthetic"].clip(0.05)) * (1.0 - margin)
+        
+        # 实力分差
+        df["strength_diff"] = df["home_strength"] - df["away_strength"]
+        
+        # 胜率差（home - away），对称特征，避免偏向某一方
+        df["win_prob_diff"] = df["home_win_prob_synthetic"] - df["away_win_prob_synthetic"]
+        
+        # 赔率差（反映实力差距的市场认知）
+        df["odds_gap_synthetic"] = abs(df["home_odds_synthetic"] - df["away_odds_synthetic"])
+        
+        # 隐含概率（只保留差值，避免不对称特征）
+        total_prob = df["home_win_prob_synthetic"] + df["draw_prob_synthetic"] + df["away_win_prob_synthetic"]
+        df["home_implied_prob"] = df["home_win_prob_synthetic"] / total_prob
+        df["draw_implied_prob"] = df["draw_prob_synthetic"] / total_prob
+        df["away_implied_prob"] = df["away_win_prob_synthetic"] / total_prob
+        
+        # 对称差量特征
+        df["implied_prob_diff"] = df["home_implied_prob"] - df["away_implied_prob"]
+        
+        self.logger.info(f"Added 10 synthetic odds features (strength-based, symmetric)")
         return df
         
     def _create_labels(self, df: pd.DataFrame) -> pd.DataFrame:
