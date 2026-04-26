@@ -80,7 +80,7 @@ def run_predictions():
                 )
                 market_factor = value / 100 if value > 0 else 0.5
                 final_confidence = base_score * (0.7 + 0.3 * market_factor)
-                final_confidence = max(30, min(85, final_confidence))
+                final_confidence = max(5, min(90, final_confidence))
 
                 # 风险等级
                 if upset_risk >= 60:

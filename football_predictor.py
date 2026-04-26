@@ -880,20 +880,20 @@ class FootballPredictor:
             print(f"\n   ⚖️ 检测到分歧，启动辩论机制...")
             print(f"      原因: {debate_reason}")
             debate_result = self._run_debate(match_info, debate_reason)
-            # 辩论后降低信心分数
-            confidence_penalty = 15
         else:
             debate_result = None
-            confidence_penalty = 0
 
-        # 动态权重调整
+        # 动态权重调整（含ML信心动态降权）
+        ml_effective_weight = 0.25 if upset_risk > 60 else 0.35
+        ml_effective_weight = ml_effective_weight if ml_confidence >= 45 else 0.10
+
         if upset_risk > 60:
             weights = {
                 "stats": 0.20,
                 "tactics": 0.15,
                 "sentiment": 0.15,
                 "upset": 0.25,
-                "ml": 0.25
+                "ml": ml_effective_weight
             }
         else:
             weights = {
@@ -901,8 +901,13 @@ class FootballPredictor:
                 "tactics": 0.15,
                 "sentiment": 0.15,
                 "upset": 0.10,
-                "ml": 0.35
+                "ml": ml_effective_weight
             }
+
+        # ML信心低时，将剩余权重分配给Stats
+        weight_remainder = (0.25 if upset_risk > 60 else 0.35) - ml_effective_weight
+        if weight_remainder > 0:
+            weights["stats"] += weight_remainder
 
         # 计算基础信心分
         base_score = (
@@ -952,6 +957,15 @@ class FootballPredictor:
         market_factor = selected_value / 100 if selected_value > 0 else 0.5
         final_confidence = base_score * (0.7 + 0.3 * market_factor)
 
+        # 市场价值阈值检查 - 两个市场价值都低时建议跳过
+        max_market_value = max(asian_value, overunder_value)
+        if max_market_value < 55:
+            selected_market = "跳过"
+            recommendation = "放弃（市场价值不足）"
+            if "market_detail" in locals():
+                market_detail["intention"] = "无明确价值"
+            final_confidence = min(final_confidence, 35)  # 强制降低信心
+
         # 应用辩论调整
         if debate_result:
             final_confidence += debate_result.get("confidence_adjustment", 0)
@@ -960,10 +974,19 @@ class FootballPredictor:
                 final_confidence = min(final_confidence, 45)
 
         # 确保信心分数在合理范围内
-        final_confidence = max(30, min(85, final_confidence))
+        final_confidence = max(5, min(90, final_confidence))
+
+        # 信号清晰度标签 - 帮助用户区分"有信号"和"模糊"
+        if final_confidence >= 60:
+            signal_clarity = "清晰"
+        elif final_confidence >= 40:
+            signal_clarity = "模糊"
+        else:
+            signal_clarity = "无信号"
 
         consensus = {
             "final_confidence": round(final_confidence, 1),  # 唯一的信心分数
+            "signal_clarity": signal_clarity,                # 信号清晰度标签
             "selected_market": selected_market,
             "recommendation": recommendation,
             "market_detail": market_detail,
@@ -1022,6 +1045,7 @@ class FootballPredictor:
         运行辩论机制
 
         当分析师意见分歧时，进行辩论并做出裁决
+        使用三级裁决体系：strong_consensus / weak_consensus / divided
         """
         home_cn = match_info.get("home_team_cn", match_info["home_team"])
         away_cn = match_info.get("away_team_cn", match_info["away_team"])
@@ -1034,44 +1058,75 @@ class FootballPredictor:
         asian_recommendation = self.reports.get("asian", {}).get("recommendation", "N/A")
         overunder_recommendation = self.reports.get("overunder", {}).get("market_bias", "N/A")
 
+        upset_risk = self.reports.get("upset", {}).get("upset_risk_score", 50)
+        stats_conf = self.reports.get("stats", {}).get("confidence_weight", 50)
+        tactics_score = self.reports.get("tactics", {}).get("tactical_match_score", 50)
+        ml_report = self.reports.get("ml", {})
+        ml_confidence = ml_report.get("confidence", 50) if not ml_report.get("error") else 50
+
         # 模拟辩论过程
         print(f"\n   ⚖️ 辩论过程:")
         print(f"   【Stats观点】: {stats_view}")
         print(f"   【Tactics观点】: {tactics_view}")
         print(f"   【Upset观点】: {upset_view}")
 
-        # 辩论协调员裁决
-        # 规则1: 数据质量优先
-        # 规则2: 风险控制优先
+        # === 动态裁决逻辑 ===
 
-        upset_risk = self.reports.get("upset", {}).get("upset_risk_score", 50)
-
+        # 风险太高的情况
         if upset_risk > 60:
-            # 风险太高，倾向放弃
+            verdict_type = "divided"
             verdict = "观望"
             verdict_reason = f"冷门风险({upset_risk})过高，风险控制优先"
             confidence_adjustment = -20
         elif "数据不足" in stats_view or "不足" in tactics_view:
-            # 数据不足，放弃
+            # 数据不足
+            verdict_type = "divided"
             verdict = "观望"
             verdict_reason = "数据不足，无法做出可靠判断"
             confidence_adjustment = -25
         else:
-            # 根据价值分数判断
+            # 计算分析师之间的一致性
+            traditional_avg = (stats_conf + tactics_score) / 2
+            ml_aligned_with_traditional = abs(ml_confidence - traditional_avg) <= 15
             asian_value = self.reports.get("asian", {}).get("value_score", 0)
             overunder_value = self.reports.get("overunder", {}).get("overunder_value_score", 0)
 
-            if asian_value > overunder_value:
-                verdict = f"让球盘 {asian_recommendation}"
-                verdict_reason = "让球盘价值更高，数据质量更可靠"
+            # 判断是否强共识
+            if ml_aligned_with_traditional and upset_risk < 40:
+                # ML与传统分析一致，且风险低 -> 强共识
+                verdict_type = "strong_consensus"
+                if asian_value >= overunder_value:
+                    verdict = f"让球盘 {asian_recommendation}"
+                    verdict_reason = "各方分析师观点一致，让球盘价值更高"
+                else:
+                    verdict = f"大小球 {overunder_recommendation}"
+                    verdict_reason = "各方分析师观点一致，大小球价值更高"
+                confidence_adjustment = 0
+            elif upset_risk < 55:
+                # 弱共识 - 有分歧但风险可控
+                verdict_type = "weak_consensus"
+                if asian_value > overunder_value:
+                    verdict = f"让球盘 {asian_recommendation}"
+                    verdict_reason = "分析师存在分歧但让球盘价值略高"
+                else:
+                    verdict = f"大小球 {overunder_recommendation}"
+                    verdict_reason = "分析师存在分歧但大小球价值略高"
+                confidence_adjustment = -8
             else:
-                verdict = f"大小球 {overunder_recommendation}"
-                verdict_reason = "大小球价值更高，市场更一致"
-            confidence_adjustment = -10
+                # 严重分歧
+                verdict_type = "divided"
+                if asian_value > overunder_value:
+                    verdict = f"让球盘 {asian_recommendation}"
+                    verdict_reason = "分析师严重分歧，建议谨慎"
+                else:
+                    verdict = f"大小球 {overunder_recommendation}"
+                    verdict_reason = "分析师严重分歧，建议谨慎"
+                confidence_adjustment = -20
 
         debate_result = {
             "debate_triggered": True,
             "debate_reason": debate_reason,
+            "verdict_type": verdict_type,          # strong_consensus / weak_consensus / divided
             "stats_view": stats_view,
             "tactics_view": tactics_view,
             "upset_view": upset_view,
@@ -1081,6 +1136,7 @@ class FootballPredictor:
         }
 
         print(f"\n   ⚖️ 辩论裁决:")
+        print(f"      裁决类型: {verdict_type}")
         print(f"      裁决: {verdict}")
         print(f"      理由: {verdict_reason}")
         print(f"      信心调整: {confidence_adjustment}%")
@@ -1101,7 +1157,10 @@ class FootballPredictor:
         primary_risk = self.reports.get('upset', {}).get('primary_risk_factor', '无明显风险')
 
         # 构建推荐详情
-        if consensus['market_detail']['type'] == 'asian':
+        if consensus['selected_market'] == '跳过':
+            market_info = "无推荐市场"
+            analysis_note = "市场价值不足，建议跳过该比赛"
+        elif consensus['market_detail']['type'] == 'asian':
             market_info = f"让球盘 {consensus['market_detail'].get('handicap', 'N/A')}"
             analysis_note = f"盘口: {consensus['market_detail'].get('handicap', 'N/A')} | 机构意图: {consensus['market_detail'].get('intention', 'N/A')}"
         else:
@@ -1145,6 +1204,7 @@ class FootballPredictor:
 【Upset观点】: {debate.get('upset_view', 'N/A')}
 
 【协调员裁决】: {debate.get('verdict', 'N/A')}
+【裁决类型】: {'强共识' if debate.get('verdict_type') == 'strong_consensus' else '弱共识' if debate.get('verdict_type') == 'weak_consensus' else '严重分歧'}
 【裁决理由】: {debate.get('verdict_reason', 'N/A')}
 """
 
@@ -1158,7 +1218,8 @@ class FootballPredictor:
 {analysis_note}
 
 💪 信心分数: {consensus['final_confidence']}%
-（我认为这个推荐正确的概率）
+📊 信号清晰度: {consensus.get('signal_clarity', 'N/A')}
+（信心分数越高越可信，信号清晰度帮助判断是否值得下注）
 
 {'='*60}
 ⚠️ 免责声明
@@ -1248,7 +1309,8 @@ class FootballPredictor:
                 "recommended_market": consensus.get("selected_market", ""),
                 "recommendation": consensus.get("recommendation", ""),
                 "confidence": consensus.get("final_confidence", 0),
-                "market_value": consensus.get("market_value", 0),
+                "signal_clarity": consensus.get("signal_clarity", ""),
+                "market_value": consensus.get("selected_value", 0),
                 "market_detail": consensus.get("market_detail", {})
             },
             "timestamp": datetime.now().isoformat()
@@ -1259,7 +1321,7 @@ class FootballPredictor:
 def main():
     """主函数 - 示例用法"""
     print("="*60)
-    print("🏆 足球预测智能体系统 v1.0")
+    print("🏆 足球预测智能体系统 v1.1")
     print("="*60)
 
     # 示例：预测英超比赛
