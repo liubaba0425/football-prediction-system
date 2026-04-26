@@ -1,0 +1,17 @@
+{
+  "version": "3.1 (two-stage draw optimization)",
+  "stage1_model": "xgboost_v3_draw_s1_20260426_123320.json",
+  "stage2_model": "xgboost_v3_draw_s2_20260426_123320.json",
+  "draw_weight": 3.917204932472108,
+  "test_accuracy": 0.43496503496503497,
+  "cv_mean": 0.3899244332493703,
+  "cv_scores": [
+    0.4521410579345088,
+    0.3904282115869018,
+    0.371536523929471,
+    0.3778337531486146,
+    0.35768261964735515
+  ],
+  "data_size": 9530,
+  "training_date": "2026-04-26T12:33:20.473274"
+}

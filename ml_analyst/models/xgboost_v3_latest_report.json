@@ -1,0 +1,80 @@
+{
+  "model_name": "xgboost_v3_real_odds_20260426_123146",
+  "version": "3.0",
+  "data_source": "football-data.co.uk",
+  "features": [
+    "home_odds",
+    "draw_odds",
+    "away_odds",
+    "home_implied_prob",
+    "draw_implied_prob",
+    "away_implied_prob",
+    "odds_gap",
+    "implied_prob_diff",
+    "asian_handicap",
+    "handicap_magnitude",
+    "over_odds",
+    "under_odds",
+    "over_under_bias",
+    "odds_ratio_home",
+    "odds_ratio_away",
+    "home_favorite",
+    "clear_favorite",
+    "days_since_epoch"
+  ],
+  "feature_count": 18,
+  "test_accuracy": 0.4958041958041958,
+  "cv_mean": 0.46259445843828717,
+  "cv_std": 0.028016938252855714,
+  "cv_scores": [
+    0.48551637279596976,
+    0.4596977329974811,
+    0.48551637279596976,
+    0.4722921914357683,
+    0.40994962216624686
+  ],
+  "ensemble": "XGBoost(60%) + LightGBM(40%)",
+  "data_size": 9530,
+  "train_size": 6671,
+  "val_size": 1429,
+  "test_size": 1430,
+  "class_distribution": {
+    "0": 4131,
+    "1": 2453,
+    "2": 2946
+  },
+  "classification_report": {
+    "home": {
+      "precision": 0.5210643015521065,
+      "recall": 0.7820299500831946,
+      "f1-score": 0.6254158349966733,
+      "support": 601.0
+    },
+    "draw": {
+      "precision": 0.3684210526315789,
+      "recall": 0.10526315789473684,
+      "f1-score": 0.16374269005847952,
+      "support": 399.0
+    },
+    "away": {
+      "precision": 0.4758454106280193,
+      "recall": 0.45813953488372094,
+      "f1-score": 0.466824644549763,
+      "support": 430.0
+    },
+    "accuracy": 0.4958041958041958,
+    "macro avg": {
+      "precision": 0.45511025493723495,
+      "recall": 0.44847754762055086,
+      "f1-score": 0.418661056534972,
+      "support": 1430.0
+    },
+    "weighted avg": {
+      "precision": 0.46487634391808696,
+      "recall": 0.4958041958041958,
+      "f1-score": 0.4489110820438686,
+      "support": 1430.0
+    }
+  },
+  "training_date": "2026-04-26T12:31:46.738394"
+}
