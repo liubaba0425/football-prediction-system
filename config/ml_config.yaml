@@ -1,0 +1,46 @@
+# ML系统配置
+ml_system:
+  # 数据源配置
+  football_data_api:
+    base_url: "https://api.football-data.org/v4"
+    auth_token: "5ca663e49263467e8664864a767f8c31"
+    rate_limit_requests: 10  # 每分钟请求限制
+    
+  # 模型配置
+  xgboost:
+    n_estimators: 200
+    max_depth: 9
+    learning_rate: 0.3
+    objective: "multi:softprob"
+    num_class: 3
+    eval_metric: "mlogloss"
+    early_stopping_rounds: 10
+    subsample: 1.0
+    colsample_bytree: 1.0
+    gamma: 0
+    seed: 42
+    
+  # 训练配置
+  training:
+    test_size: 0.2
+    random_state: 42
+    validation_size: 0.1
+    min_samples_required: 100  # 最小训练样本数
+    
+  # 特征工程
+  features:
+    rolling_window_size: 5  # 滚动窗口大小
+    include_advanced_stats: true
+    include_form_features: true
+    
+  # 路径配置
+  paths:
+    model_dir: "~/openclaw-workspace/ml_analyst/models"
+    data_dir: "~/openclaw-workspace/ml_analyst/data"
+    features_dir: "~/openclaw-workspace/ml_analyst/features"
+    logs_dir: "~/openclaw-workspace/ml_analyst/logs"
+    
+  # 调度配置
+  scheduler:
+    daily_training_time: "03:00"  # 每天3:00 AM训练
+    data_refresh_frequency_hours: 24

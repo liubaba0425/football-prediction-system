@@ -1,0 +1,5 @@
+ml_system:
+  data_dir: "./ml_analyst/data"
+  features_dir: "./ml_analyst/features"
+  model_dir: "./ml_analyst/models"
+  log_dir: "./ml_analyst/logs"
