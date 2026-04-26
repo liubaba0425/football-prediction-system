@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from data_fetcher import RealTimeDataFetcher
 from team_translator import translate_team_name, translate_match_info
+from backtest_manager import BacktestManager
 
 # 添加当前目录到Python路径，确保可以导入ml_analyst模块
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -238,6 +239,9 @@ class FootballPredictor:
         else:
             print("⚠️  ML-Analyst 不可用，将跳过机器学习分析")
 
+        # 初始化回测管理器（单例）
+        self.backtest_manager = BacktestManager()
+
     def predict(self, home_team: str, away_team: str, league: str = "soccer_epl"):
         """
         执行完整预测流程
@@ -374,6 +378,10 @@ class FootballPredictor:
 
         # 生成程序化调用用的预测字典
         prediction_dict = self._generate_prediction_dict(match_info, consensus)
+
+        # 记录到回测系统
+        self.backtest_manager.record_prediction(prediction_dict)
+
         return prediction_dict
 
     def _fetch_data(self, home_team: str, away_team: str, league: str) -> Optional[Dict]:
@@ -1270,7 +1278,7 @@ class FootballPredictor:
             print(f"保存报告失败: {e}")
 
     def _generate_prediction_dict(self, match_info: Dict, consensus: Dict) -> Dict:
-        """生成预测结果字典，供程序化调用"""
+        """生成预测结果字典，供程序化调用和回测追踪"""
         # 获取中文队名
         home_cn = match_info.get("home_team_cn", match_info["home_team"])
         away_cn = match_info.get("away_team_cn", match_info["away_team"])
@@ -1289,11 +1297,16 @@ class FootballPredictor:
         upset_risk = upset_report.get("upset_risk_score", 0)
         risk_level = upset_report.get("risk_level", "中")
         
-        # 构建字典
+        # 获取辩论结果
+        debate_result = consensus.get("debate_result", {})
+        
+        # 构建字典（扩展回测字段）
         prediction_dict = {
             "success": True,
             "home_team_cn": home_cn,
             "away_team_cn": away_cn,
+            "league": match_info.get("league", ""),
+            "match_date": match_info.get("commence_time", ""),
             "implied_probabilities": {
                 "home": implied_prob.get("home", 0),
                 "draw": implied_prob.get("draw", 0),
@@ -1311,7 +1324,9 @@ class FootballPredictor:
                 "confidence": consensus.get("final_confidence", 0),
                 "signal_clarity": consensus.get("signal_clarity", ""),
                 "market_value": consensus.get("selected_value", 0),
-                "market_detail": consensus.get("market_detail", {})
+                "market_detail": consensus.get("market_detail", {}),
+                "debate_triggered": consensus.get("debate_triggered", False),
+                "verdict_type": debate_result.get("verdict_type", "") if debate_result else "",
             },
             "timestamp": datetime.now().isoformat()
         }
