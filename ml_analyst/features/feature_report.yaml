@@ -1,0 +1,32 @@
+总比赛记录数: 3504
+总特征数: 77
+标签分布:
+  0.0: 5559
+  1.0: 3360
+  2.0: 4162
+特征形状: !!python/tuple
+- 13081
+- 77
+生成时间: '2026-04-26T12:03:45.884090'
+选定特征:
+- matchday
+- match_date_ordinal
+- home_recent_form
+- home_avg_goals_scored
+- home_avg_goals_conceded
+- home_home_performance
+- home_away_performance
+- home_days_since_last_match
+- home_goal_efficiency
+- away_recent_form
+- away_avg_goals_scored
+- away_avg_goals_conceded
+- away_home_performance
+- away_away_performance
+- away_days_since_last_match
+- away_goal_efficiency
+- is_weekend
+- month
+- day_of_week
+- season_month
+选定特征数: 30

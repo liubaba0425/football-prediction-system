@@ -560,29 +560,33 @@ class FootballPredictor:
         return report
 
     def _run_sentiment_analyst(self, match_info: Dict, pinnacle_data: Dict) -> Dict:
-        """运行市场情绪分析师"""
+        """运行市场情绪分析师 v2.0 — 联网新闻 + 赔率情绪"""
         h2h = pinnacle_data.get("h2h", {}) or {}
         if not h2h:
-            return {"market_sentiment_score": 50, "confidence_weight": 0}
+            return {"market_sentiment_score": 50, "news_sentiment_score": 50,
+                    "composite_sentiment_score": 50, "confidence_weight": 0}
 
         home_odds = h2h.get("home", 2.0)
         draw_odds = h2h.get("draw", 3.0)
         away_odds = h2h.get("away", 2.0)
 
-        # 计算隐含概率
-        home_prob = (1 / home_odds) / (1/home_odds + 1/draw_odds + 1/away_odds) * 100
-        draw_prob = (1 / draw_odds) / (1/home_odds + 1/draw_odds + 1/away_odds) * 100
-        away_prob = (1 / away_odds) / (1/home_odds + 1/draw_odds + 1/away_odds) * 100
+        # ── 1. 赔率隐含概率 ─────────────────────
+        total_inv = 1/home_odds + 1/draw_odds + 1/away_odds
+        home_prob = (1 / home_odds) / total_inv * 100
+        draw_prob = (1 / draw_odds) / total_inv * 100
+        away_prob = (1 / away_odds) / total_inv * 100
 
-        # 市场情绪评分
+        # 赔率市场情绪
         if home_prob > away_prob:
-            sentiment_score = 50 + (home_prob - away_prob)
-            trend = f"市场偏向{match_info['home_team']}"
+            market_score = 50 + (home_prob - away_prob)
+            trend = f"市场偏向{match_info.get('home_team_cn', match_info['home_team'])}"
         else:
-            sentiment_score = 50 - (away_prob - home_prob)
-            trend = f"市场偏向{match_info['away_team']}"
+            market_score = 50 - (away_prob - home_prob)
+            trend = f"市场偏向{match_info.get('away_team_cn', match_info['away_team'])}"
 
-        # 市场一致性评估
+        market_score = max(0, min(100, round(market_score, 0)))
+
+        # 市场一致性
         if abs(home_prob - away_prob) > 20:
             consistency = "高"
         elif abs(home_prob - away_prob) > 10:
@@ -590,18 +594,75 @@ class FootballPredictor:
         else:
             consistency = "低"
 
+        # ── 2. 新闻舆情分析（新增！联网搜索）─────────
+        match_news = self.real_time_data.get("match_news", {})
+        news_sentiment = match_news.get("news_sentiment", {})
+        
+        news_score = news_sentiment.get("score", 50)
+        news_direction = news_sentiment.get("direction", "中性")
+        news_buzz = news_sentiment.get("buzz_level", "低")
+        news_consistency = news_sentiment.get("consistency", "低")
+        key_headlines = news_sentiment.get("key_headlines", [])
+
+        # ── 3. 综合评分（新闻40% + 赔率60%）─────────
+        if news_buzz == "低":
+            # 新闻太少，赔率权重提升
+            composite = round(market_score * 0.85 + news_score * 0.15, 0)
+            alignment = "新闻不足"
+        else:
+            composite = round(market_score * 0.6 + news_score * 0.4, 0)
+
+            # 一致性检测
+            news_leaning = 1 if news_score > 55 else (-1 if news_score < 45 else 0)
+            market_leaning = 1 if market_score > 55 else (-1 if market_score < 45 else 0)
+
+            if news_leaning == market_leaning and news_leaning != 0:
+                alignment = "一致"
+            elif news_leaning != 0 and market_leaning != 0:
+                alignment = "背离"
+            else:
+                alignment = "部分一致"
+
+        # 异常检测
+        anomaly = (alignment == "背离") or \
+                  (abs(market_score - news_score) > 25 and news_buzz != "低")
+
+        # 信心权重
+        conf = 80  # 基础
+        if alignment == "背离":
+            conf -= 20
+        if news_buzz == "低":
+            conf -= 10
+        if anomaly:
+            conf -= 10
+
         report = {
-            "market_sentiment_score": round(sentiment_score, 0),
+            "market_sentiment_score": market_score,
+            "news_sentiment_score": news_score,
+            "composite_sentiment_score": composite,
             "implied_probability_home": round(home_prob, 1),
             "implied_probability_draw": round(draw_prob, 1),
             "implied_probability_away": round(away_prob, 1),
             "odds_trend": trend,
             "market_consistency": consistency,
-            "anomaly_detected": False,
-            "confidence_weight": 75
+            "news_buzz_level": news_buzz,
+            "news_consistency": news_consistency,
+            "news_sentiment_direction": news_direction,
+            "key_news_headlines": key_headlines[:5],
+            "news_vs_odds_alignment": alignment,
+            "anomaly_detected": anomaly,
+            "anomaly_detail": f"新闻{news_direction}({news_score}) vs 赔率{trend}({market_score})" if anomaly else None,
+            "confidence_weight": conf,
+            "data_freshness": self.real_time_data.get("timestamp", "")
         }
 
-        print(f"   ✅ 市场情绪: {trend} | 一致性: {consistency}")
+        print(f"   ✅ 综合情绪: {composite:.0f}/100 "
+              f"(赔率{market_score} 新闻{news_score})")
+        print(f"      舆情: {news_direction} | 热度: {news_buzz} | "
+              f"与赔率: {alignment}")
+        if key_headlines:
+            for h in key_headlines[:3]:
+                print(f"      📰 [{h.get('source','?')}] {h.get('headline','')[:60]}...")
         return report
 
     def _run_upset_detector(self, match_info: Dict, pinnacle_data: Dict, stats_report: Dict) -> Dict:
@@ -853,7 +914,21 @@ class FootballPredictor:
         else:
             value_score = 50
             intention = "无明确意图"
-            recommendation = "谨慎或放弃"
+            # 实开时基于隐含概率给出方向
+            home_cn = match_info.get('home_team_cn', match_info['home_team'])
+            away_cn = match_info.get('away_team_cn', match_info['away_team'])
+            if actual_handicap < 0:
+                # 主队让球 → 推荐主队方向
+                recommendation = f"{home_cn} {actual_handicap:+.2f}"
+            elif actual_handicap > 0:
+                # 客队让球 → 推荐客队方向
+                recommendation = f"{away_cn} {-actual_handicap:+.2f}"
+            else:
+                # 平手盘 → 基于隐含概率选方向
+                if home_prob > 0.5:
+                    recommendation = f"{home_cn} 平手"
+                else:
+                    recommendation = f"{away_cn} 平手"
 
         report = {
             "qsda_value": round(home_prob * 100, 0),
@@ -957,7 +1032,10 @@ class FootballPredictor:
         # 提取各分析师的分数
         stats_conf = self.reports.get("stats", {}).get("confidence_weight", 50)
         tactics_score = self.reports.get("tactics", {}).get("tactical_match_score", 50)
-        sentiment_score = self.reports.get("sentiment", {}).get("market_sentiment_score", 50)
+        # 优先使用 composite_sentiment_score（综合新闻+赔率），回退到 market_sentiment_score
+        sentiment_report = self.reports.get("sentiment", {})
+        sentiment_score = sentiment_report.get("composite_sentiment_score",
+                         sentiment_report.get("market_sentiment_score", 50))
         upset_risk = self.reports.get("upset", {}).get("upset_risk_score", 50)
         asian_value = self.reports.get("asian", {}).get("value_score", 0)
         overunder_value = self.reports.get("overunder", {}).get("overunder_value_score", 0)
@@ -1064,14 +1142,32 @@ class FootballPredictor:
         market_factor = selected_value / 100 if selected_value > 0 else 0.5
         final_confidence = base_score * (0.7 + 0.3 * market_factor)
 
-        # 市场价值阈值检查 - 两个市场价值都低时建议跳过
+        # 市场价值阈值检查 - 两个市场价值都低时降低信心但不改推荐
         max_market_value = max(asian_value, overunder_value)
         if max_market_value < 55:
-            selected_market = "跳过"
-            recommendation = "放弃（市场价值不足）"
-            if "market_detail" in locals():
-                market_detail["intention"] = "无明确价值"
+            selected_market = "让球盘" if asian_value >= overunder_value else "大小球"
+            # 不改推荐！但降低信心并标记价值不足
+            if asian_value >= overunder_value:
+                recommendation = self.reports.get("asian", {}).get("recommendation", "无法推荐")
+                market_detail = {
+                    "type": "asian",
+                    "handicap": self.reports.get("asian", {}).get("actual_handicap", "N/A"),
+                    "intention": self.reports.get("asian", {}).get("intention", "N/A") + "(价值低)"
+                }
+            else:
+                bias = self.reports.get("overunder", {}).get("market_bias", "均衡")
+                line = self.reports.get("overunder", {}).get("mainstream_total_line", 2.5)
+                recommendation = f"{bias} {line}球"
+                market_detail = {
+                    "type": "overunder",
+                    "line": line,
+                    "bias": bias,
+                    "over_odds": self.reports.get("overunder", {}).get("over_odds", "N/A"),
+                    "under_odds": self.reports.get("overunder", {}).get("under_odds", "N/A"),
+                    "intention": "价值偏低"
+                }
             final_confidence = min(final_confidence, 35)  # 强制降低信心
+            print(f"   ⚠️ 价值偏低: 两市场均<55，信心降至{final_confidence:.0f}%，但仍给出推荐方向")
 
         # 应用辩论调整
         if debate_result:
@@ -1089,15 +1185,12 @@ class FootballPredictor:
             print(f"   📊 联赛校准: {league} ×{calib['mult']} ({calib['reason']}) "
                   f"{original_confidence:.1f}% → {final_confidence:.1f}%")
 
-        # 低信心抑制 — 回测显示<38%信心带准确率仅27%，强推不如观望
+        # 低信心标记 — 保留推荐方向但明确警告低信心
         if final_confidence < self.LOW_CONFIDENCE_THRESHOLD:
             original_rec = recommendation
-            recommendation = "谨慎或放弃"
-            selected_market = "让球盘"
-            if "market_detail" in locals():
-                market_detail["intention"] = "低信心抑制"
-            print(f"   ⚠️ 低信心抑制: {final_confidence:.1f}% < {self.LOW_CONFIDENCE_THRESHOLD}%阈值 "
-                  f"(原推荐: {original_rec})")
+            recommendation = f"⚠️{original_rec} (极低信心)"
+            print(f"   ⚠️ 极低信心警告: {final_confidence:.1f}% < {self.LOW_CONFIDENCE_THRESHOLD}%阈值 "
+                  f"| 推荐: {recommendation}")
 
         # 高信心加强 — 回测显示60%+信心带准确率82%
         if final_confidence >= self.HIGH_CONFIDENCE_THRESHOLD and upset_risk < 40:
@@ -1283,6 +1376,7 @@ class FootballPredictor:
 
         # 获取关键数据
         stats_prob = self.reports.get('stats', {}).get('implied_probability', {})
+        sentiment_report = self.reports.get('sentiment', {})
         upset_risk = self.reports.get('upset', {}).get('upset_risk_score', 0)
         risk_level = self.reports.get('upset', {}).get('risk_level', '中')
         primary_risk = self.reports.get('upset', {}).get('primary_risk_factor', '无明显风险')
@@ -1318,6 +1412,15 @@ class FootballPredictor:
 
 冷门风险: {risk_level} ({upset_risk}/100)
 主要风险: {primary_risk}
+
+{'='*60}
+📰 实时舆情 (Sentiment-Analyst)
+{'='*60}
+
+舆情热度: {sentiment_report.get('news_buzz_level', 'N/A')}
+新闻倾向: {sentiment_report.get('news_sentiment_direction', 'N/A')}
+与赔率一致性: {sentiment_report.get('news_vs_odds_alignment', 'N/A')}
+综合情绪分: {sentiment_report.get('composite_sentiment_score', 'N/A')}/100 (赔率{sentiment_report.get('market_sentiment_score','?')} + 新闻{sentiment_report.get('news_sentiment_score','?')})
 """
 
         # 如果触发了辩论，显示辩论结果

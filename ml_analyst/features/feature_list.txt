@@ -1,19 +1,18 @@
-选定的特征列表 (v3 — 真实赔率, 18特征):
-1. home_odds
-2. draw_odds
-3. away_odds
-4. home_implied_prob
-5. draw_implied_prob
-6. away_implied_prob
-7. odds_gap
-8. implied_prob_diff
-9. asian_handicap
-10. handicap_magnitude
-11. over_odds
-12. under_odds
-13. over_under_bias
-14. odds_ratio_home
-15. odds_ratio_away
-16. home_favorite
-17. clear_favorite
-18. days_since_epoch
+home_odds
+draw_odds
+away_odds
+home_implied_prob
+draw_implied_prob
+away_implied_prob
+odds_gap
+implied_prob_diff
+asian_handicap
+handicap_magnitude
+over_odds
+under_odds
+over_under_bias
+odds_ratio_home
+odds_ratio_away
+home_favorite
+clear_favorite
+days_since_epoch

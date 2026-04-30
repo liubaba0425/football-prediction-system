@@ -88,6 +88,7 @@ TEAM_NAME_TRANSLATIONS = {
     "Libertad Asuncion": "亚松森自由",
     "Independiente del Valle": "山谷独立",
     "Lanus": "拉努斯",
+    "LDU Quito": "基多体大",
     "Club Always Ready": "时刻准备",
 
     # 德甲
@@ -176,6 +177,7 @@ TEAM_NAME_TRANSLATIONS = {
     # 法乙
     "USL Dunkerque": "敦刻尔克",
     "Dunkerque": "敦刻尔克",
+    "Boulogne": "布洛涅",
     "Laval": "拉瓦勒",
     "Rodez": "罗德兹",
     "Rodez AF": "罗德兹",
@@ -280,6 +282,8 @@ TEAM_NAME_TRANSLATIONS = {
     "Sirius": "天狼星",
     "IFK Sirius": "天狼星",
     "IK Sirius": "天狼星",
+    "Mjällby AIF": "米亚尔比",
+    "Halmstads BK": "哈尔姆斯塔德",
     
     # 荷甲
     "AZ Alkmaar": "阿尔克马尔",
@@ -298,8 +302,10 @@ TEAM_NAME_TRANSLATIONS = {
     # 葡超
     "Braga": "布拉加",
     "SC Braga": "布拉加",
-    "Casa Pia": "卡萨比亚",
-    "Casa Pia AC": "卡萨比亚",
+    "Casa Pia": "卡萨皮亚",
+    "Casa Pia AC": "卡萨皮亚",
+    "Gil Vicente": "吉维森特",
+    "Tondela": "通德拉",
     "Famalicão": "法马利康",
     "FC Famalicão": "法马利康",
     "Porto": "波尔图",
@@ -347,6 +353,17 @@ TEAM_NAME_TRANSLATIONS = {
     "Ulsan Hyundai": "蔚山现代",
     "Seongnam FC": "城南FC",
     
+    # 澳大利亚A联赛
+    "Melbourne City": "墨尔本城",
+    "Melbourne City FC": "墨尔本城",
+    "Adelaide United": "阿德莱德联",
+    
+    # 荷兰甲级联赛
+    "Excelsior": "SBV精英",
+    "SBV Excelsior": "SBV精英",
+    "FC Utrecht": "乌得勒支",
+    "Utrecht": "乌得勒支",
+    
     # 意乙
     "Parma": "帕尔马",
     "Bari": "巴里",
@@ -376,19 +393,22 @@ TEAM_NAME_TRANSLATIONS = {
     "Arminia Bielefeld": "比勒菲尔德",
     # 芬兰超级联赛
     "TPS Turku": "TPS土尔库",
+    "FC Inter Turku": "图尔库国际",
     "IF Gnistan": "格尼斯坦",
     "Gnistan": "格尼斯坦",
     # 沙特阿拉伯联赛
-    "Al-Nassr": "阿尔纳泽马",
-    "Al Nassr": "阿尔纳泽马",
+    "Al-Nassr": "利雅得胜利",
+    "Al Nassr": "利雅得胜利",
     "Al-Taawoun": "布赖代合作",
     "Al Taawoun": "布赖代合作",
-    "Al-Ahli": "阿尔阿赫利",
-    "Al Ahli": "阿尔阿赫利",
+    "Al-Ahli": "吉达国民",
+    "Al Ahli": "吉达国民",
     "Al-Najma": "阿尔纳吉马",
     "Al Najma": "阿尔纳吉马",
     "Al-Hazem": "哈森姆",
     "Al Hazem": "哈森姆",
+    "Neom": "新未来SC",
+    "Neom SC": "新未来SC",
     "Al-Riyadh": "利亚德体育",
     "Al Riyadh": "利亚德体育",
     # Portuguese League
