@@ -143,11 +143,11 @@ except Exception as e:
 # ── 9. 队名翻译 ──
 print("\n📌 9. 队名翻译")
 try:
-    from team_translator import translate_team, TEAM_NAME_TRANSLATIONS
+    from team_translator import translate_team_name, TEAM_NAME_TRANSLATIONS
     total = sum(len(v) for v in TEAM_NAME_TRANSLATIONS.values()) if isinstance(TEAM_NAME_TRANSLATIONS, dict) else len(TEAM_NAME_TRANSLATIONS)
     check("翻译字典加载", True, f"(约{total}条)")
     # Test a known translation
-    result = translate_team("Arsenal")
+    result = translate_team_name("Arsenal")
     check("翻译功能测试 (Arsenal→阿森纳)", "阿森纳" in str(result))
 except Exception as e:
     check("队名翻译", False, str(e)[:80])
